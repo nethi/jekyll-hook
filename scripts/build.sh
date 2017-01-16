@@ -12,6 +12,12 @@ giturl=$4
 source=$5
 build=$6
 
+#edit page URL template
+editpage=$7
+
+#site path to publish (for local publishing)
+site=$8
+
 # Check to see if repo exists. If not, git clone it
 if [ ! -d $source ]; then
     git clone $giturl $source
@@ -26,5 +32,5 @@ cd -
 # Run jekyll
 cd $source
 [ -f Gemfile ] && (bundle check || bundle install)
-jekyll build -s $source -d $build
+EDIT_URL_TEMPLATE=$7 bundle exec jekyll build -s $source -d $build
 cd -

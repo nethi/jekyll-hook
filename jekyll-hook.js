@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-var config  = require('./config.json');
+var configSet  = require('./config.json');
 var fs      = require('fs');
 var express = require('express');
 var app     = express();
@@ -8,8 +8,22 @@ var queue   = require('queue-async');
 var tasks   = queue(1);
 var spawn   = require('child_process').spawn;
 var email   = require('emailjs/email');
-var mailer  = email.server.connect(config.email);
 var crypto  = require('crypto');
+var urllib = require('url') ;
+
+config = configSet.sites[0] ;
+function getConfig(url) {
+    host = urllib.parse(url).hostname ;
+    sites = configSet.sites ;
+    cfg = null ;
+    for (i = 0 ; i < sites.length; i++) {
+        if (sites[i].gh_server.startsWith(host)) {
+            cfg = sites[i] ;
+            break;
+        }
+    }
+    return cfg ;
+}
 
 app.use(express.bodyParser({
     verify: function(req,res,buffer){
@@ -17,6 +31,9 @@ app.use(express.bodyParser({
             return;
         }
 
+        var data = req.body;
+        url = data.repository.url ;
+        config = getConfig(url) ;
         if(!config.secret || config.secret==""){
             console.log("Recieved a X-Hub-Signature header, but cannot validate as no secret is configured");
             return;
@@ -47,17 +64,27 @@ app.post('/hooks/jekyll/*', function(req, res) {
         var branch = req.params[0];
         var params = [];
 
+        console.log("hook received:"+ JSON.stringify(data))
         // Parse webhook data for internal variables
         data.repo = data.repository.name;
         data.branch = data.ref.replace('refs/heads/', '');
-        data.owner = data.repository.owner.name;
+        data.owner =  data.repository.owner ? data.repository.owner.name : data.project.namespace;
 
-        // End early if not permitted account
-        if (config.accounts.indexOf(data.owner) === -1) {
-            console.log(data.owner + ' is not an authorized account.');
-            if (typeof cb === 'function') cb();
-            return;
+        url = data.repository.homepage || data.repository.url ;
+        console.log("webhook repo url:"+url) ;
+        config = getConfig(url) ;
+        console.log("config returned:"+config.gh_server) ;
+        if (!config || !config.publish.project_mappings[data.repo]) {
+            console.log("Couldn't find a matching project definition for:"+data.repo) ;
+            return ;
         }
+        // End early if not permitted account
+        // RN+ With project-mappings, this is not required
+        //if (config.accounts.indexOf(data.owner) === -1) {
+        //    console.log(data.owner + ' is not an authorized account.');
+        //    if (typeof cb === 'function') cb();
+        //    return;
+        //}
 
         // End early if not permitted branch
         branchArray = data.ref.split("/")
@@ -73,15 +100,38 @@ app.post('/hooks/jekyll/*', function(req, res) {
         /* owner  */ params.push(data.owner);
 
         /* giturl */
-        if (config.public_repo) {
-            params.push('https://' + config.gh_server + '/' + data.owner + '/' + data.repo + '.git');
-        } else {
-            params.push('git@' + config.gh_server + ':' + data.owner + '/' + data.repo + '.git');
+
+
+       if (config.gh_server.startsWith("gitlab.")) {
+            //Git URLs for gitlab enterprise
+           if (config.public_repo) {
+              params.push(data.repository.git_http_url);
+           } else {
+              params.push(data.repository.git_ssh_url);
+           }
         }
+        else if (config.gh_server.startsWith("github")) {
+            //Git URLs for github enterprise
+           if (config.public_repo) {
+              params.push(data.repository.clone_url);
+           } else {
+              params.push(data.repository.ssh_url);
+           }
+            
+        }
+	    else {
+           if (config.public_repo) {
+              params.push('https://' + config.gh_server + '/' + data.owner + '/' + data.repo + '.git');
+           } else {
+               params.push('git@' + config.gh_server + ':' + data.owner + '/' + data.repo + '.git');
+           }
+	    }
 
         /* source */ params.push(config.temp + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'code');
         /* build  */ params.push(config.temp + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'site');
 
+        /* editurl template*/ params.push(getEditPageUrl(config, data)) ;
+        /* publish path */ params.push(config.publish.doc_root+'/'+config.publish.project_mappings[data.repo].short_name) ;
         // Script by branch.
         var build_script = null;
         try {
@@ -113,7 +163,7 @@ app.post('/hooks/jekyll/*', function(req, res) {
         run(build_script, params, function(err) {
             if (err) {
                 console.log('Failed to build: ' + data.owner + '/' + data.repo);
-                send('Your website at ' + data.owner + '/' + data.repo + ' failed to build.', 'Error building site', data);
+                send(config, 'Your website at ' + data.owner + '/' + data.repo + ' failed to build.', 'Error building site', data);
 
                 if (typeof cb === 'function') cb();
                 return;
@@ -123,7 +173,7 @@ app.post('/hooks/jekyll/*', function(req, res) {
             run(publish_script, params, function(err) {
                 if (err) {
                     console.log('Failed to publish: ' + data.owner + '/' + data.repo);
-                    send('Your website at ' + data.owner + '/' + data.repo + ' failed to publish.', 'Error publishing site', data);
+                    send(config, 'Your website at ' + data.owner + '/' + data.repo + ' failed to publish.', 'Error publishing site', data);
 
                     if (typeof cb === 'function') cb();
                     return;
@@ -131,7 +181,7 @@ app.post('/hooks/jekyll/*', function(req, res) {
 
                 // Done running scripts
                 console.log('Successfully rendered: ' + data.owner + '/' + data.repo);
-                send('Your website at ' + data.owner + '/' + data.repo + ' was successfully published.', 'Successfully published site', data);
+                send(config, 'Your website at ' + data.owner + '/' + data.repo + ' was successfully published.', 'Successfully published site', data);
 
                 if (typeof cb === 'function') cb();
                 return;
@@ -141,11 +191,35 @@ app.post('/hooks/jekyll/*', function(req, res) {
 
 });
 
+//setup our static site server for all sites defined in the config.json
+setupDocServer(app) ;
+
 // Start server
 var port = process.env.PORT || 8080;
 app.listen(port);
 console.log('Listening on port ' + port);
 
+
+function findProject(cfg, name) {
+    mappings = cfg.publish.project_mappings ;
+    return mappings(name) ;    
+}
+function getEditPageUrl(cfg, data) {
+    url = cfg.edit_url_template ;
+
+    url = url.replace(/${repo_server}/g, cfg.gh_server) ;
+    url = url.replace(/${repo_owner}/g, data.repo) ;
+    url = url.replace(/${repo_name}/g, data.repo) ;
+    url = url.replace(/${repo_branch}/g, data.branch) ;
+    return url ;
+}
+function setupDocServer(app) {
+    sites = configSet.sites ;
+    for (i = 0 ; i < sites.length; i++) {
+        cfg = sites[i] ;
+        app.use(cfg.publish.doc_root_url_path, express.static(cfg.publish.doc_root)) ;
+    }    
+}
 function run(file, params, cb) {
     var process = spawn(file, params);
 
@@ -162,7 +236,7 @@ function run(file, params, cb) {
     });
 }
 
-function send(body, subject, data) {
+function send(config, body, subject, data) {
     if (config.email && config.email.isActivated && data.pusher.email) {
         var message = {
             text: body,
@@ -170,6 +244,7 @@ function send(body, subject, data) {
             to: data.pusher.email,
             subject: subject
         };
+        var mailer  = email.server.connect(config.email);
         mailer.send(message, function(err) { if (err) console.warn(err); });
     }
 }
