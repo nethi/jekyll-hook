@@ -2,6 +2,7 @@
 
 var configSet  = require('./config.json');
 var fs      = require('fs');
+var path      = require('path');
 var express = require('express');
 var app     = express();
 var queue   = require('queue-async');
@@ -64,7 +65,8 @@ app.post('/hooks/jekyll/*', function(req, res) {
         var branch = req.params[0];
         var params = [];
 
-        console.log("hook received:"+ JSON.stringify(data))
+        console.log("hook received: req parameter:"+req.param[0]) ;
+        console.log("hook received:"+ JSON.stringify(data)) ;
         // Parse webhook data for internal variables
         data.repo = data.repository.name;
         data.branch = data.ref.replace('refs/heads/', '');
@@ -74,7 +76,7 @@ app.post('/hooks/jekyll/*', function(req, res) {
         console.log("webhook repo url:"+url) ;
         config = getConfig(url) ;
         console.log("config returned:"+config.gh_server) ;
-        if (!config || !config.publish.project_mappings[data.repo]) {
+        if (!config || !config.project_mappings[data.repo]) {
             console.log("Couldn't find a matching project definition for:"+data.repo) ;
             return ;
         }
@@ -127,11 +129,20 @@ app.post('/hooks/jekyll/*', function(req, res) {
            }
 	    }
 
-        /* source */ params.push(config.temp + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'code');
-        /* build  */ params.push(config.temp + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'site');
+        var base_dir = config.temp ;
+        if (!path.isAbsolute(base_dir))
+            base_dir = path.normalize(path.join(__dirname , base_dir)) ;
+        /* source */ params.push(base_dir + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'code');
+        /* build  */ params.push(base_dir + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'site');
 
         /* editurl template*/ params.push(getEditPageUrl(config, data)) ;
-        /* publish path */ params.push(config.publish.doc_root+'/'+config.publish.project_mappings[data.repo].short_name) ;
+
+        var base_dir = config.serve.doc_root ;
+        if (!path.isAbsolute(base_dir))
+            base_dir = path.normalize(path.join(__dirname , base_dir)) ;
+        /* publish path */ params.push(base_dir +'/'+config.project_mappings[data.repo].short_name) ;
+
+
         // Script by branch.
         var build_script = null;
         try {
@@ -158,6 +169,7 @@ app.post('/hooks/jekyll/*', function(req, res) {
             throw new Error('No default publish script defined.');
           }
         }
+
 
         // Run build script
         run(build_script, params, function(err) {
@@ -201,23 +213,27 @@ console.log('Listening on port ' + port);
 
 
 function findProject(cfg, name) {
-    mappings = cfg.publish.project_mappings ;
-    return mappings(name) ;    
+    mappings = cfg.project_mappings ;
+    return mappings[name] ;    
 }
 function getEditPageUrl(cfg, data) {
     url = cfg.edit_url_template ;
 
-    url = url.replace(/${repo_server}/g, cfg.gh_server) ;
-    url = url.replace(/${repo_owner}/g, data.repo) ;
-    url = url.replace(/${repo_name}/g, data.repo) ;
-    url = url.replace(/${repo_branch}/g, data.branch) ;
+    url = url.replace(/\${repo_server}/g, cfg.gh_server) ;
+    url = url.replace(/\${repo_owner}/g, data.repo) ;
+    url = url.replace(/\${repo_name}/g, data.repo) ;
+    url = url.replace(/\${repo_branch}/g, data.branch) ;
     return url ;
 }
 function setupDocServer(app) {
     sites = configSet.sites ;
     for (i = 0 ; i < sites.length; i++) {
         cfg = sites[i] ;
-        app.use(cfg.publish.doc_root_url_path, express.static(cfg.publish.doc_root)) ;
+
+        var base_dir = cfg.serve.doc_root ;
+        if (!path.isAbsolute(base_dir)) 
+            base_dir = path.normalize(path.join(__dirname , base_dir)) ;
+        app.use(cfg.serve.doc_root_url_path, express.static(base_dir)) ;
     }    
 }
 function run(file, params, cb) {

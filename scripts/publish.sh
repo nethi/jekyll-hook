@@ -22,6 +22,10 @@ site=$8
 
 # Remove old site files, move new ones in place
 # On amazon EC2 use sudo if nginx html forlder has root ownership
+if [ ! -d $site ]; then
+   mkdir -p $site
+fi
 
 rm -rf $site
+
 mv $build $site

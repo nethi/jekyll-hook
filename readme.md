@@ -10,14 +10,15 @@ NGINX config with basic auth), or want to host your site directly on a CDN or
 file host like S3. It's cutomizable with two user-configurable shell scripts
 and a config file.
 
-*This guide is tested on Ubuntu 14.0*
+*This guide is tested on Ubuntu 16.0*
 
 ## Dependencies Installation
 
 First install main dependencies
 
     $: sudo apt-get update
-    $: sudo apt-get install git nodejs ruby ruby1.9.1-dev npm
+    $: sudo apt-get install git nodejs ruby ruby-all-dev npm
+    $: sudo gem install bundler
 
 Symlink nodejs to node
 

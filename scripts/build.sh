@@ -29,6 +29,7 @@ git checkout $branch
 git pull origin $branch
 cd -
 
+
 # Run jekyll
 cd $source
 [ -f Gemfile ] && (bundle check || bundle install)
