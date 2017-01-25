@@ -25,8 +25,8 @@ fi
 
 # Git checkout appropriate branch, pull latest code
 cd $source
-#git checkout $branch
-#git pull origin $branch
+git checkout $branch
+git pull origin $branch
 cd -
 
 
