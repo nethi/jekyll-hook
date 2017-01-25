@@ -65,7 +65,7 @@ app.post('/hooks/jekyll/*', function(req, res) {
         var branch = req.params[0];
         var params = [];
 
-        console.log("hook received: req parameter:"+req.param[0]) ;
+        console.log("hook received: req parameter:"+req.params[0]) ;
         console.log("hook received:"+ JSON.stringify(data)) ;
         // Parse webhook data for internal variables
         data.repo = data.repository.name;
@@ -76,10 +76,15 @@ app.post('/hooks/jekyll/*', function(req, res) {
         console.log("webhook repo url:"+url) ;
         config = getConfig(url) ;
         console.log("config returned:"+config.gh_server) ;
+
         if (!config || !config.project_mappings[data.repo]) {
             console.log("Couldn't find a matching project definition for:"+data.repo) ;
             return ;
         }
+
+        //find project settings for this webhook's project
+        project = findProject(config, data.repo) ;
+
         // End early if not permitted account
         // RN+ With project-mappings, this is not required
         //if (config.accounts.indexOf(data.owner) === -1) {
@@ -132,15 +137,17 @@ app.post('/hooks/jekyll/*', function(req, res) {
         var base_dir = config.temp ;
         if (!path.isAbsolute(base_dir))
             base_dir = path.normalize(path.join(__dirname , base_dir)) ;
+
         /* source */ params.push(base_dir + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'code');
         /* build  */ params.push(base_dir + '/' + data.owner + '/' + data.repo + '/' + data.branch + '/' + 'site');
 
         /* editurl template*/ params.push(getEditPageUrl(config, data)) ;
 
-        var base_dir = config.serve.doc_root ;
+        var base_dir = project.doc_root ;
         if (!path.isAbsolute(base_dir))
             base_dir = path.normalize(path.join(__dirname , base_dir)) ;
-        /* publish path */ params.push(base_dir +'/'+config.project_mappings[data.repo].short_name) ;
+        base_dir = path.join(base_dir, project.short_name) ;    
+        /* publish path */ params.push(base_dir) ;
 
 
         // Script by branch.
@@ -203,10 +210,10 @@ app.post('/hooks/jekyll/*', function(req, res) {
 
 });
 
-//setup our static site server for all sites defined in the config.json
-setupDocServer(app) ;
+//setup our static site server for all sites/projects defined in the config.json
+setupDocServers(configSet) ;
 
-// Start server
+// Start server to receive webhooks
 var port = process.env.PORT || 8080;
 app.listen(port);
 console.log('Listening on port ' + port);
@@ -225,7 +232,7 @@ function getEditPageUrl(cfg, data) {
     url = url.replace(/\${repo_branch}/g, data.branch) ;
     return url ;
 }
-function setupDocServer(app) {
+function setupDocServer1(app) {
     sites = configSet.sites ;
     for (i = 0 ; i < sites.length; i++) {
         cfg = sites[i] ;
@@ -236,6 +243,43 @@ function setupDocServer(app) {
         app.use(cfg.serve.doc_root_url_path, express.static(base_dir)) ;
     }    
 }
+
+function setupDocServers(config) {
+    var sites = config.sites ;
+    for (i = 0 ; i < sites.length; i++) {
+        site_cfg = sites[i] ;
+
+        console.log("Site:"+site_cfg.gh_server) ;
+        var project ;
+        for (name in  site_cfg.project_mappings) {
+            project = site_cfg.project_mappings[name] ;
+
+            //for each project setup the doc server
+            //for now,  the ports should be unique for each project - will enhance it later
+            var base_dir = project.doc_root ;
+            if (!path.isAbsolute(base_dir)) 
+                base_dir = path.normalize(path.join(__dirname , base_dir)) ;
+
+            doc_root = project.doc_root
+            if (!path.isAbsolute(doc_root) ) 
+                doc_root = path.normalize(path.join(__dirname , doc_root)) ;
+            doc_root = path.join(doc_root, project.short_name) ;    
+            dapp = setupDocServer(project.name, project.doc_root_url_path, doc_root,
+                                project.port) ;
+        }                        
+    }    
+}
+function setupDocServer(name, url_path, doc_root, port) {
+    var dapp = express() ;
+
+    console.log("Starting dock server for project:"+name+" on port:"+port+" & doc_root:"+doc_root);
+    dapp.use(url_path, express.static(doc_root)) ;
+
+    dapp.listen(port) ;
+    return dapp ;
+}
+
+
 function run(file, params, cb) {
     var process = spawn(file, params);
 
