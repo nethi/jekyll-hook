@@ -106,33 +106,37 @@ app.post('/hooks/jekyll/*', function(req, res) {
         /* branch */ params.push(data.branch);
         /* owner  */ params.push(data.owner);
 
-        /* giturl */
+        /* giturl for cloning */
+        //First, check if we have a clone URL specified, otherwise construct one.
+       clone_url = getCloneUrl(config, data) ;
 
-
-       if (config.gh_server.startsWith("gitlab.")) {
-            //Git URLs for gitlab enterprise
-           if (config.public_repo) {
-              params.push(data.repository.git_http_url);
-           } else {
-              params.push(data.repository.git_ssh_url);
-           }
-        }
-        else if (config.gh_server.startsWith("github")) {
-            //Git URLs for github enterprise
-           if (config.public_repo) {
-              params.push(data.repository.clone_url);
-           } else {
-              params.push(data.repository.ssh_url);
-           }
-            
-        }
-	    else {
-           if (config.public_repo) {
-              params.push('https://' + config.gh_server + '/' + data.owner + '/' + data.repo + '.git');
-           } else {
-               params.push('git@' + config.gh_server + ':' + data.owner + '/' + data.repo + '.git');
-           }
-	    }
+       if (!clone_url) {
+        if (config.gh_server.startsWith("gitlab.")) {
+                //Git URLs for gitlab enterprise
+            if (config.public_repo) {
+                clone_url = data.repository.git_http_url ;
+            } else {
+                clone_url = data.repository.git_ssh_url ;
+            }
+            }
+            else if (config.gh_server.startsWith("github")) {
+                //Git URLs for github enterprise
+                if (config.public_repo) {
+                    clone_url = data.repository.clone_url ;
+                } else {
+                    clone_url = data.repository.ssh_url ;
+                }
+                
+            }
+            else {
+                if (config.public_repo) {
+                    clone_url = 'https://' + config.gh_server + '/' + data.owner + '/' + data.repo + '.git' ;
+                } else {
+                    clone_url = 'git@' + config.gh_server + ':' + data.owner + '/' + data.repo + '.git' ;
+                }
+            }
+       }
+       params.push(clone_url) ;
 
         var base_dir = config.temp ;
         if (!path.isAbsolute(base_dir))
@@ -230,6 +234,16 @@ function getEditPageUrl(cfg, data) {
     url = url.replace(/\${repo_owner}/g, data.repo) ;
     url = url.replace(/\${repo_name}/g, data.repo) ;
     url = url.replace(/\${repo_branch}/g, data.branch) ;
+    return url ;
+}
+function getCloneUrl(cfg, data) {
+    url = cfg.clone_url ;
+    if (url) {
+        url = url.replace(/\${repo_server}/g, cfg.gh_server) ;
+        url = url.replace(/\${repo_owner}/g, data.repo) ;
+        url = url.replace(/\${repo_name}/g, data.repo) ;
+        url = url.replace(/\${repo_branch}/g, data.branch) ;
+    }
     return url ;
 }
 function setupDocServer1(app) {
